@@ -630,6 +630,11 @@
             <button class="btn-icone" id="relProjetoCompartilhar" title="Compartilhar">📤</button>
             <button class="btn-icone" id="relProjetoSalvar" title="Salvar">💾</button>
         </div>
+    <div class="caixa">
+        <h4 style="margin-top:0;">🔄 Reprocessar Estoque <span class="subtitulo" style="font-weight:normal;">(auditoria — recalcula o saldo de todos os produtos a partir do histórico de movimentações)</span></h4>
+        <p class="subtitulo">Recalcula o estoque de cada produto somando estoque inicial + entradas − saídas registradas, e corrige quem estiver divergente. Não mexe em quem já está certo.</p>
+        <button class="btn btn-cinza" id="btnReprocessarEstoque">Reprocessar agora</button>
+        <div id="resultadoReprocessarEstoque" style="margin-top:12px;"></div>
     </div>
 </div>
 
@@ -943,18 +948,18 @@ function proximoIdProduto() {
 /* ---------- comunicação com o backend (Supabase) ---------- */
 async function chamarGet(acao, filtros) {
     if (acao === 'listarProdutos') {
-        const { data, error } = await sb.from('fabrica_produtos').select('*').eq('unidade_negocio_id', meuPerfil.unidadeId).range(0, 9999);
+        const { data, error } = await sb.from('estoque_produtos').select('*').eq('unidade_negocio_id', meuPerfil.unidadeId).range(0, 9999);
         if (error) throw error;
         return data;
     }
     if (acao === 'listarMovimentacoes') {
-        const { data, error } = await sb.from('fabrica_movimentacoes').select('*').eq('unidade_negocio_id', meuPerfil.unidadeId).order('data', { ascending: false }).limit(300);
+        const { data, error } = await sb.from('estoque_movimentacoes').select('*').eq('unidade_negocio_id', meuPerfil.unidadeId).order('data', { ascending: false }).limit(300);
         if (error) throw error;
         return data;
     }
     if (acao === 'listarMovimentacoesFiltradas') {
         filtros = filtros || {};
-        let query = sb.from('fabrica_movimentacoes').select('*').eq('unidade_negocio_id', meuPerfil.unidadeId).order('data', { ascending: false }).limit(500);
+        let query = sb.from('estoque_movimentacoes').select('*').eq('unidade_negocio_id', meuPerfil.unidadeId).order('data', { ascending: false }).limit(500);
         if (filtros.produtoId) query = query.eq('produto_id', filtros.produtoId);
         if (filtros.tag) query = query.ilike('tag', `%${filtros.tag}%`);
         if (filtros.evento) query = query.eq('evento', filtros.evento);
@@ -986,13 +991,13 @@ async function chamarPost(acao, d) {
             unidade_negocio_id: meuPerfil.unidadeId
         };
         if (p.id) registro.id = p.id; // se não informado, o banco gera automaticamente
-        const { data, error } = await sb.from('fabrica_produtos').upsert(registro).select().single();
+        const { data, error } = await sb.from('estoque_produtos').upsert(registro).select().single();
         if (error) throw error;
         return data;
     }
     if (acao === 'registrarMovimentacao') {
         const m = d.movimentacao;
-        const { error: e1 } = await sb.from('fabrica_movimentacoes').insert({
+        const { error: e1 } = await sb.from('estoque_movimentacoes').insert({
             data: m.data, produto_id: m.produtoId, tipo: m.tipo, qtd: m.qtd, valor_unit: m.valorUnit,
             tag: m.tag || '', evento: m.evento || '', observacao: m.observacao || '', responsavel: m.responsavel || '',
             projeto_id: m.projetoId || null, item_projeto_id: m.itemProjetoId || null,
@@ -1041,7 +1046,7 @@ async function chamarPost(acao, d) {
         return;
     }
     if (acao === 'editarMovimentacao') {
-        const { data: antiga, error: eSel } = await sb.from('fabrica_movimentacoes').select('produto_id,tipo,qtd').eq('id', d.movId).single();
+        const { data: antiga, error: eSel } = await sb.from('estoque_movimentacoes').select('produto_id,tipo,qtd').eq('id', d.movId).single();
         if (eSel) throw eSel;
         const sinal = antiga.tipo === 'entrada' ? 1 : -1;
         await sb.rpc('fabrica_ajustar_estoque', { p_produto_id: antiga.produto_id, p_delta: -sinal * Number(antiga.qtd) });
@@ -1051,16 +1056,16 @@ async function chamarPost(acao, d) {
         if (d.observacao != null) upd.observacao = d.observacao;
         if (d.tag != null) upd.tag = d.tag;
         if (d.evento != null) upd.evento = d.evento;
-        const { error } = await sb.from('fabrica_movimentacoes').update(upd).eq('id', d.movId);
+        const { error } = await sb.from('estoque_movimentacoes').update(upd).eq('id', d.movId);
         if (error) throw error;
         return;
     }
     if (acao === 'removerMovimentacao') {
-        const { data: antiga, error: eSel } = await sb.from('fabrica_movimentacoes').select('produto_id,tipo,qtd').eq('id', d.movId).single();
+        const { data: antiga, error: eSel } = await sb.from('estoque_movimentacoes').select('produto_id,tipo,qtd').eq('id', d.movId).single();
         if (eSel) throw eSel;
         const sinal = antiga.tipo === 'entrada' ? 1 : -1;
         await sb.rpc('fabrica_ajustar_estoque', { p_produto_id: antiga.produto_id, p_delta: -sinal * Number(antiga.qtd) });
-        const { error } = await sb.from('fabrica_movimentacoes').delete().eq('id', d.movId);
+        const { error } = await sb.from('estoque_movimentacoes').delete().eq('id', d.movId);
         if (error) throw error;
         return;
     }
@@ -1627,7 +1632,7 @@ function renderizarTabelaNFe() {
         tr.innerHTML = `
             <td>${escapeHtml(item.cProd)}</td>
             <td>${escapeHtml(item.xProdOriginal)}</td>
-            <td>${escapeHtml(item.un)}</td>
+            <td><input type="text" class="input-qtd-pedida" value="${escapeHtml(item.un)}" data-nfe-unidade="${idx}" style="width:70px;"></td>
             <td class="num"><input type="number" step="0.01" class="input-qtd-pedida" value="${item.qtd}" data-nfe-qtd="${idx}"></td>
             <td class="num"><input type="number" step="0.01" class="input-qtd-pedida" value="${item.valorUnit}" data-nfe-valor="${idx}"></td>
             <td>${item.criarNovo
@@ -1637,6 +1642,9 @@ function renderizarTabelaNFe() {
             <td class="center"><button class="btn btn-cinza btn-pequeno" data-nfe-vincular="${idx}">🔍 Vincular</button></td>
         `;
         corpo.appendChild(tr);
+    });
+    corpo.querySelectorAll('[data-nfe-unidade]').forEach(inp => {
+        inp.addEventListener('change', () => { nfeItensParseados[Number(inp.dataset.nfeUnidade)].un = inp.value.trim().toUpperCase() || 'UN'; });
     });
     corpo.querySelectorAll('[data-nfe-qtd]').forEach(inp => {
         inp.addEventListener('change', () => { nfeItensParseados[Number(inp.dataset.nfeQtd)].qtd = parseFloat(inp.value) || 0; });
@@ -1706,6 +1714,8 @@ async function processarImportacaoNFe(tipo) {
 
     statusEl.className = '';
     statusEl.textContent = `Processando ${nfeItensParseados.length} item(ns)...`;
+    document.getElementById('btnNfeEntrada').disabled = true;
+    document.getElementById('btnNfeBaixa').disabled = true;
 
     try {
         for (const item of nfeItensParseados) {
@@ -1744,6 +1754,16 @@ async function processarImportacaoNFe(tipo) {
         statusEl.className = 'status-msg sucesso';
         statusEl.textContent = `✅ ${nfeItensParseados.length} item(ns) registrado(s) como ${tipo === 'entrada' ? 'entrada em estoque' : 'baixa direta'}.`;
         renderizarTabelaEstoque(buscarProdutos(document.getElementById('buscaEstoque').value));
+
+        // limpa os dados importados JÁ, na hora — não espera o modal
+        // fechar sozinho, pra não correr risco de registrar de novo
+        // se alguém clicar outra vez em "Registrar" nesse meio-tempo
+        nfeItensParseados = [];
+        nfeDadosNota = null;
+        document.getElementById('nfeArquivo').value = '';
+        document.getElementById('nfeInfo').innerHTML = '';
+        document.getElementById('nfeBlocoItens').style.display = 'none';
+
         setTimeout(() => {
             document.getElementById('modalImportarNFe').classList.remove('aberto');
         }, 2000);
@@ -1751,6 +1771,9 @@ async function processarImportacaoNFe(tipo) {
         console.error(err);
         statusEl.className = 'status-msg erro';
         statusEl.textContent = '⚠️ ' + err.message;
+    } finally {
+        document.getElementById('btnNfeEntrada').disabled = false;
+        document.getElementById('btnNfeBaixa').disabled = false;
     }
 }
 
@@ -2652,7 +2675,14 @@ document.getElementById('btn-login').addEventListener('click', async () => {
 });
 document.getElementById('login-senha').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btn-login').click(); });
 
-document.getElementById('btn-sair').addEventListener('click', async () => { await sb.auth.signOut(); location.reload(); });
+document.getElementById('btn-sair').addEventListener('click', async () => {
+    await sb.auth.signOut();
+    // reforço: limpa qualquer resíduo de sessão que possa ter sobrado
+    // no localStorage, pra garantir que o próximo login começa 100% do
+    // zero (evita "herdar" dado da unidade/usuário anterior)
+    Object.keys(localStorage).filter(k => k.startsWith('sb-')).forEach(k => localStorage.removeItem(k));
+    location.reload();
+});
 
 // ---------- criar unidade ----------
 document.getElementById('btn-criar-unidade').addEventListener('click', async () => {
@@ -3328,6 +3358,50 @@ function renderizarResultadosEventoRelatorio(termo) {
     });
     el.classList.add('aberto');
 }
+document.getElementById('btnReprocessarEstoque').addEventListener('click', async () => {
+    const btn = document.getElementById('btnReprocessarEstoque');
+    const resultadoEl = document.getElementById('resultadoReprocessarEstoque');
+    if (!confirm('Isso vai recalcular o estoque de todos os produtos dessa unidade a partir do histórico de movimentações, e corrigir quem estiver divergente. Continuar?')) return;
+
+    btn.disabled = true;
+    const textoOriginal = btn.textContent;
+    btn.textContent = 'Reprocessando...';
+    resultadoEl.innerHTML = '';
+
+    try {
+        const { data, error } = await sb.rpc('fn_estoque_reprocessar_movimentos', { p_unidade_negocio_id: meuPerfil.unidadeId });
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+            resultadoEl.innerHTML = `<p class="status-msg sucesso">✅ Tudo certo — nenhum produto precisou de ajuste.</p>`;
+        } else {
+            const linhas = data.map(r => `
+                <tr>
+                    <td>#${r.produto_id} — ${escapeHtml(r.nome)}</td>
+                    <td class="num">${Number(r.estoque_anterior).toLocaleString('pt-BR')}</td>
+                    <td class="num">${Number(r.estoque_recalculado).toLocaleString('pt-BR')}</td>
+                    <td class="num" style="color:${Number(r.diferenca) < 0 ? '#c62828' : '#2e7d32'};">${Number(r.diferenca) > 0 ? '+' : ''}${Number(r.diferenca).toLocaleString('pt-BR')}</td>
+                </tr>
+            `).join('');
+            resultadoEl.innerHTML = `
+                <p class="status-msg sucesso">⚠️ ${data.length} produto(s) corrigido(s):</p>
+                <table class="tabela" style="margin-top:8px;">
+                    <thead><tr><th>Produto</th><th class="num">Estava</th><th class="num">Correto</th><th class="num">Diferença</th></tr></thead>
+                    <tbody>${linhas}</tbody>
+                </table>
+            `;
+            await carregarProdutos();
+            renderizarTabelaEstoque(buscarProdutos(document.getElementById('buscaEstoque').value));
+        }
+    } catch (err) {
+        console.error(err);
+        resultadoEl.innerHTML = `<p class="status-msg erro">⚠️ ${escapeHtml(err.message)}</p>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = textoOriginal;
+    }
+});
+
 document.getElementById('relBtnBuscarEvento').addEventListener('click', () => renderizarResultadosEventoRelatorio(document.getElementById('relBuscaEvento').value));
 document.getElementById('relBuscaEvento').addEventListener('input', () => {
     const termo = document.getElementById('relBuscaEvento').value;
